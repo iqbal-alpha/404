@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Under Maintenance</title>
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
+      background: #ffffff;
+    }
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #loopCanvas {
+      max-width: 100vw;
+      max-height: 100vh;
+      max-height: 100dvh;
+      width: auto;
+      height: auto;
+      display: block;
+      background: #ffffff;
+    }
+    .sr-videos {
+      position: fixed;
+      width: 1px;
+      height: 1px;
+      opacity: 0.001;
+      pointer-events: none;
+      left: -9999px;
+      top: -9999px;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="loopCanvas" width="2192" height="1396" aria-label="Under Maintenance UFO and worker animation"></canvas>
+  <div class="sr-videos" aria-hidden="true">
+    <video id="v1" muted playsinline preload="auto"></video>
+    <video id="v2" muted playsinline preload="auto"></video>
+  </div>
+
+  <script>
+    (() => {
+      const MODES = {
+        desktop: { src: 'loop-desktop.webm', width: 2192, height: 1396 },
+        mobile: { src: 'loop-mobile.webm', width: 1080, height: 1800 }
+      };
+
+      const FPS = 60;
+      const BRIDGE_COUNT = 24; // Pre-cached first 0.40s frames for 0ms seamless handoff
+
+      const canvas = document.getElementById('loopCanvas');
+      const ctx = canvas.getContext('2d', { alpha: false });
+      const videos = [
+        document.getElementById('v1'),
+        document.getElementById('v2')
+      ];
+
+      let currentModeKey = null;
+      let modeCfg = MODES.desktop;
+      let bridgeFrames = new Array(BRIDGE_COUNT).fill(null);
+      let bridgeReadyCount = 0;
+
+      let activeIdx = 0;
+      let switching = false;
+      let started = false;
+      let cycleStartPerf = 0;
+      let lastDrawnTime = -1;
+      let loadGeneration = 0;
+
+      function detectMode() {
+        const w = window.innerWidth || document.documentElement.clientWidth || 1024;
+        const h = window.innerHeight || document.documentElement.clientHeight || 768;
+        return (w / Math.max(1, h)) < 1.0 ? 'mobile' : 'desktop';
+      }
+
+      function createBridgeCanvas(sourceVideo, w, h) {
+        const off = document.createElement('canvas');
+        off.width = w;
+        off.height = h;
+        const octx = off.getContext('2d', { alpha: false });
+        octx.drawImage(sourceVideo, 0, 0, w, h);
+        return off;
+      }
+
+      function captureBridgeIfNeeded(video) {
+        if (bridgeReadyCount >= BRIDGE_COUNT || video.readyState < 2) return;
+        const idx = Math.floor(video.currentTime * FPS + 0.25);
+        if (idx >= 0 && idx < BRIDGE_COUNT && !bridgeFrames[idx]) {
+          bridgeFrames[idx] = createBridgeCanvas(video, modeCfg.width, modeCfg.height);
+          bridgeReadyCount++;
+        }
+      }
+
+      function prepareStandby(vid) {
+        try {
+          vid.pause();
+          if (Math.abs(vid.currentTime) > 0.001) {
+            vid.currentTime = 0;
+          }
+        } catch (_) {}
+      }
+
+      function safePlay(vid) {
+        const p = vid.play();
+        if (p && typeof p.catch === 'function') {
+          p.catch(() => {});
+        }
+      }
+
+      function triggerHandoff() {
+        if (switching) return;
+        switching = true;
+
+        const prev = videos[activeIdx];
+        const nextIdx = 1 - activeIdx;
+        const next = videos[nextIdx];
+
+        activeIdx = nextIdx;
+        cycleStartPerf = performance.now();
+        lastDrawnTime = -1;
+
+        try {
+          if (next.currentTime > 0.02) next.currentTime = 0;
+        } catch (_) {}
+
+        safePlay(next);
+
+        requestAnimationFrame(() => {
+          prepareStandby(prev);
+          switching = false;
+        });
+      }
+
+      function applyMode(nextModeKey) {
+        if (nextModeKey === currentModeKey) return;
+        currentModeKey = nextModeKey;
+        modeCfg = MODES[nextModeKey];
+        loadGeneration++;
+        const gen = loadGeneration;
+
+        canvas.width = modeCfg.width;
+        canvas.height = modeCfg.height;
+        canvas.style.aspectRatio = `${modeCfg.width} / ${modeCfg.height}`;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, modeCfg.width, modeCfg.height);
+
+        bridgeFrames = new Array(BRIDGE_COUNT).fill(null);
+        bridgeReadyCount = 0;
+        activeIdx = 0;
+        switching = false;
+        started = false;
+        lastDrawnTime = -1;
+
+        const v1 = videos[0];
+        const v2 = videos[1];
+        prepareStandby(v1);
+        prepareStandby(v2);
+
+        v1.src = modeCfg.src;
+        v2.src = modeCfg.src;
+        v1.load();
+        v2.load();
+
+        const onV1Ready = () => {
+          if (gen !== loadGeneration) return;
+          if (!started) {
+            started = true;
+            cycleStartPerf = performance.now();
+            ctx.drawImage(v1, 0, 0, modeCfg.width, modeCfg.height);
+            captureBridgeIfNeeded(v1);
+            safePlay(v1);
+          }
+        };
+
+        const onV2Ready = () => {
+          if (gen !== loadGeneration) return;
+          prepareStandby(v2);
+        };
+
+        v1.addEventListener('loadeddata', onV1Ready, { once: true });
+        v2.addEventListener('loadeddata', onV2Ready, { once: true });
+
+        if (v1.readyState >= 2) {
+          onV1Ready();
+        } else {
+          safePlay(v1);
+        }
+      }
+
+      function renderLoop(now) {
+        const active = videos[activeIdx];
+        const duration = active.duration;
+        const { width: W, height: H } = modeCfg;
+
+        if (
+          started &&
+          !switching &&
+          Number.isFinite(duration) &&
+          duration > 1 &&
+          (active.ended || active.currentTime >= duration - 0.025)
+        ) {
+          triggerHandoff();
+        }
+
+        const currentActive = videos[activeIdx];
+
+        if (currentActive.readyState >= 2) {
+          captureBridgeIfNeeded(currentActive);
+
+          const isSpinningUp =
+            currentActive.paused ||
+            (currentActive.currentTime < 0.05 && lastDrawnTime < 0 && bridgeReadyCount > 0);
+
+          if (isSpinningUp) {
+            const elapsedSec = Math.max(0, (now - cycleStartPerf) / 1000);
+            const bIdx = Math.min(BRIDGE_COUNT - 1, Math.floor(elapsedSec * FPS));
+            if (bridgeFrames[bIdx]) {
+              ctx.drawImage(bridgeFrames[bIdx], 0, 0, W, H);
+            } else {
+              ctx.drawImage(currentActive, 0, 0, W, H);
+            }
+          } else {
+            ctx.drawImage(currentActive, 0, 0, W, H);
+            lastDrawnTime = currentActive.currentTime;
+          }
+        } else if (bridgeFrames[0]) {
+          const elapsedSec = Math.max(0, (now - cycleStartPerf) / 1000);
+          const bIdx = Math.min(BRIDGE_COUNT - 1, Math.floor(elapsedSec * FPS));
+          if (bridgeFrames[bIdx]) {
+            ctx.drawImage(bridgeFrames[bIdx], 0, 0, W, H);
+          }
+        }
+
+        requestAnimationFrame(renderLoop);
+      }
+
+      let resizeTimer = null;
+      function handleViewportChange() {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+          applyMode(detectMode());
+        }, 120);
+      }
+
+      applyMode(detectMode());
+
+      window.addEventListener('resize', handleViewportChange, { passive: true });
+      window.addEventListener('orientationchange', handleViewportChange, { passive: true });
+
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+          safePlay(videos[activeIdx]);
+        }
+      });
+
+      const resumeOnGesture = () => {
+        safePlay(videos[activeIdx]);
+        window.removeEventListener('pointerdown', resumeOnGesture);
+        window.removeEventListener('keydown', resumeOnGesture);
+      };
+      window.addEventListener('pointerdown', resumeOnGesture, { passive: true });
+      window.addEventListener('keydown', resumeOnGesture, { passive: true });
+
+      requestAnimationFrame(renderLoop);
+    })();
+  </script>
+</body>
+</html>

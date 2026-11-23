@@ -1,0 +1,35 @@
+# Generated intermediate build assets (recreated by generate-assets.ps1)
+bg-desktop.png
+bg-mobile.png
+sprites/
+
+# Raw reference video (local source only, not needed at runtime)
+*.mov
+
+# Dependencies & Logs
+node_modules/
+*.log
+npm-debug.log*
+
+# Temporary & Scratch Files
+scratch/
+tmp/
+*.tmp
+*.bak
+
+# OS & Editor Artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# AI Agents & Local Tooling
+.gemini/
+.agent/
+.agents/
+.claude/
+.codex/
+skills-lock.json
